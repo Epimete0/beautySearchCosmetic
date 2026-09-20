@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ProductoParcial } from '@/lib/types';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, Info } from 'lucide-react';
 
 export default function ConfirmarPage({ params }: { params: { barcode: string } }) {
   const [formData, setFormData] = useState<ProductoParcial>({
@@ -21,8 +21,12 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [source, setSource] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [step, setStep] = useState<'verificar' | 'editar'>('verificar');
+  const [isVerified, setIsVerified] = useState<boolean | null>(null);
+  const [rejectedNotice, setRejectedNotice] = useState(false);
 
   const router = useRouter();
 
@@ -37,10 +41,21 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
             barcode: params.barcode,
           });
         }
-        setSource(parsed.source || null);
+        const foundSource = parsed.source || null;
+        setSource(foundSource);
+
+        // If data was found from an external source, show verification step first
+        if (foundSource && parsed.data?.nombre) {
+          setStep('verificar');
+        } else {
+          setStep('editar');
+        }
       } catch (e) {
         console.error('Error parsing session lookup:', e);
+        setStep('editar');
       }
+    } else {
+      setStep('editar');
     }
     setLoading(false);
   }, [params.barcode]);
@@ -51,6 +66,54 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
       ...prev,
       [name]: value,
     }));
+  };
+
+  const handleVerifyMatch = async () => {
+    setVerifying(true);
+    try {
+      await fetch('/api/verificar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: params.barcode, verificado: true }),
+      });
+    } catch (err) {
+      console.error('Error recording verification match:', err);
+    }
+    setIsVerified(true);
+    setVerifying(false);
+    setStep('editar');
+  };
+
+  const handleRejectMatch = async () => {
+    setVerifying(true);
+    try {
+      await fetch('/api/verificar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: params.barcode, verificado: false }),
+      });
+    } catch (err) {
+      console.error('Error recording verification rejection:', err);
+    }
+
+    // Reset formData to blank manual product (only keeping barcode)
+    setFormData({
+      barcode: params.barcode,
+      nombre: '',
+      marca: '',
+      submarca: '',
+      categoria: '',
+      cantidad: '',
+      imagen_url: '',
+      fuente: 'manual',
+      respuesta_cruda: null,
+      traduccion_pendiente: false,
+    });
+    setSource(null);
+    setIsVerified(false);
+    setRejectedNotice(true);
+    setVerifying(false);
+    setStep('editar');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -66,6 +129,7 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
           ...formData,
           // Once reviewed and confirmed by user, pending translation is cleared
           traduccion_pendiente: false,
+          verificado: isVerified,
         }),
       });
 
@@ -95,6 +159,111 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
     );
   }
 
+  // Verification Screen (shown when data was found externally)
+  if (step === 'verificar') {
+    return (
+      <div className="max-w-md md:max-w-xl mx-auto px-4 py-6 md:py-10">
+        <header className="mb-6">
+          <h1 className="font-headline font-bold text-2xl text-[#211B26] tracking-tight">
+            Verificar producto
+          </h1>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-body text-xs text-[#8A8580]">Código:</span>
+            <span className="font-mono text-xs text-[#211B26] tracking-wider font-semibold">
+              {params.barcode}
+            </span>
+          </div>
+        </header>
+
+        {source && (
+          <div className="mb-6 p-3 bg-[#FFFFFF] border border-[#E4E0E6] rounded text-xs font-body text-[#211B26] flex items-center justify-between">
+            <span className="text-[#8A8580]">Información encontrada en:</span>
+            <span className="font-medium text-[#2F6F62]">
+              {source === 'open_beauty_facts'
+                ? 'Open Beauty Facts'
+                : 'Open Food Facts'}
+            </span>
+          </div>
+        )}
+
+        {/* Verification Card (Read-Only) */}
+        <div className="bg-[#FFFFFF] border border-[#E4E0E6] rounded-lg p-5 md:p-6 shadow-sm">
+          {/* Image */}
+          {formData.imagen_url ? (
+            <div className="w-full h-48 bg-[#FFFFFF] border border-[#E4E0E6] rounded flex items-center justify-center p-3 mb-5 overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={formData.imagen_url}
+                alt={formData.nombre || ''}
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+          ) : (
+            <div className="w-full h-36 bg-[#F1EEF2] border border-[#E4E0E6] rounded flex flex-col items-center justify-center text-[#8A8580] mb-5 gap-1.5">
+              <span className="text-xs font-body">Sin imagen disponible</span>
+            </div>
+          )}
+
+          {/* Product Info (Read-only) */}
+          <div className="space-y-2">
+            <h2 className="font-headline font-bold text-lg md:text-xl text-[#211B26] leading-snug">
+              {formData.nombre || 'Sin nombre registrado'}
+            </h2>
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              {formData.marca && (
+                <span className="font-body text-sm text-[#8A8580] font-medium">
+                  {formData.marca}
+                </span>
+              )}
+              {formData.cantidad && (
+                <span className="font-body text-xs text-[#8A8580] px-2 py-0.5 border border-[#E4E0E6] bg-[#F1EEF2] rounded">
+                  {formData.cantidad}
+                </span>
+              )}
+            </div>
+            {formData.categoria && (
+              <p className="font-body text-xs text-[#8A8580] pt-1 border-t border-[#E4E0E6]/60">
+                {formData.categoria}
+              </p>
+            )}
+          </div>
+
+          {/* Verification Question */}
+          <div className="mt-8 pt-5 border-t border-[#E4E0E6] text-center">
+            <p className="font-headline font-semibold text-base text-[#211B26]">
+              ¿Este producto coincide con el que tienes en la mano?
+            </p>
+          </div>
+
+          {/* Two Large Side-by-Side Action Buttons */}
+          <div className="mt-6 flex flex-row items-center gap-3">
+            <button
+              type="button"
+              disabled={verifying}
+              onClick={handleRejectMatch}
+              className="flex-1 py-3.5 px-4 rounded font-headline font-medium text-sm border border-[#E4E0E6] bg-[#FFFFFF] hover:bg-[#F1EEF2] active:bg-[#E4E0E6] text-[#8A8580] hover:text-[#211B26] transition-colors flex items-center justify-center gap-1.5"
+            >
+              <span>No coincide</span>
+            </button>
+            <button
+              type="button"
+              disabled={verifying}
+              onClick={handleVerifyMatch}
+              className="flex-1 py-3.5 px-4 rounded font-headline font-semibold text-sm bg-[#2F6F62] hover:bg-[#26594e] active:bg-[#1e483e] text-white transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            >
+              {verifying ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <span>Sí, coincide</span>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Editable Form Screen
   const isPendingTranslation = Boolean(formData.traduccion_pendiente);
 
   return (
@@ -111,6 +280,19 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
         </div>
       </header>
 
+      {/* Notice when user rejected external match */}
+      {rejectedNotice && (
+        <div className="mb-6 p-3.5 bg-[#FFFFFF] border border-[#2F6F62]/30 rounded text-xs font-body text-[#211B26] flex items-start gap-2.5">
+          <Info className="w-4 h-4 text-[#2F6F62] shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-[#211B26]">Vamos a cargarlo manualmente</p>
+            <p className="text-[#8A8580] mt-0.5">
+              El dato incorrecto no se va a guardar en tu catálogo.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Source Status Banner */}
       {source && (
         <div className="mb-6 p-3 bg-[#FFFFFF] border border-[#E4E0E6] rounded text-xs font-body text-[#211B26] flex items-center justify-between">
@@ -123,7 +305,7 @@ export default function ConfirmarPage({ params }: { params: { barcode: string } 
         </div>
       )}
 
-      {!source && (
+      {!source && !rejectedNotice && (
         <div className="mb-6 p-3 bg-[#FFFFFF] border border-[#E4E0E6] rounded text-xs font-body text-[#8A8580]">
           Sin coincidencia externa. Completa los datos manualmente.
         </div>

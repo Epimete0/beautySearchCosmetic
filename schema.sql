@@ -21,5 +21,16 @@ create table historial_escaneos (
   barcode text not null,
   encontrado boolean not null,
   producto_id uuid references productos(id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  verificado boolean
 );
+
+-- Row Level Security (RLS)
+alter table productos enable row level security;
+alter table historial_escaneos enable row level security;
+
+create policy "allow all for anon" on productos
+  for all using (true) with check (true);
+
+create policy "allow all for anon" on historial_escaneos
+  for all using (true) with check (true);

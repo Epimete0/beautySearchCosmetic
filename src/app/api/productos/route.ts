@@ -41,9 +41,14 @@ export async function POST(request: Request) {
 
     // Update historial_escaneos to link to the new product_id
     if (producto) {
+      const updateData: { producto_id: string; verificado?: boolean } = { producto_id: producto.id };
+      if (typeof data.verificado === 'boolean') {
+        updateData.verificado = data.verificado;
+      }
+
       await supabase
         .from('historial_escaneos')
-        .update({ producto_id: producto.id })
+        .update(updateData)
         .eq('barcode', producto.barcode)
         .is('producto_id', null);
     }
