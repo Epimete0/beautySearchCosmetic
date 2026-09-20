@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function GET(
   request: Request,
   { params }: { params: { barcode: string } }
 ) {
   try {
+    if (!isSupabaseConfigured) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const { barcode } = params;
 
     const { data, error } = await supabase
