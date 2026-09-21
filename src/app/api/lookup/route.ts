@@ -96,6 +96,7 @@ export async function POST(request: Request) {
         await supabase.from('historial_escaneos').insert({
           barcode,
           encontrado: true,
+          source: 'local',
           producto_id: localData.id,
         });
 
@@ -132,6 +133,7 @@ export async function POST(request: Request) {
         await supabase.from('historial_escaneos').insert({
           barcode,
           encontrado: true,
+          source: externalMatch.source,
           producto_id: null,
         });
       }
@@ -148,6 +150,7 @@ export async function POST(request: Request) {
       await supabase.from('historial_escaneos').insert({
         barcode,
         encontrado: false,
+        source: null,
         producto_id: null,
       });
     }

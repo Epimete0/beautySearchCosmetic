@@ -20,6 +20,7 @@ create table historial_escaneos (
   id uuid primary key default gen_random_uuid(),
   barcode text not null,
   encontrado boolean not null,
+  source text,                           -- 'local' | 'open_beauty_facts' | 'open_food_facts' | null (no match)
   producto_id uuid references productos(id),
   created_at timestamptz not null default now(),
   verificado boolean

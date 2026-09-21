@@ -61,14 +61,22 @@ export default async function HomePage() {
           <h2 className="font-headline font-semibold text-sm text-[#211B26]">
             Últimos registros
           </h2>
-          {recientes.length > 0 && (
+          <div className="flex items-center gap-3">
             <Link
-              href="/productos"
-              className="text-xs font-body text-[#2F6F62] hover:underline"
+              href="/estadisticas"
+              className="text-xs font-body text-[#8A8580] hover:underline"
             >
-              Ver todos
+              Estadísticas
             </Link>
-          )}
+            {recientes.length > 0 && (
+              <Link
+                href="/productos"
+                className="text-xs font-body text-[#2F6F62] hover:underline"
+              >
+                Ver todos
+              </Link>
+            )}
+          </div>
         </div>
 
         {recientes.length === 0 ? (

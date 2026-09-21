@@ -3,7 +3,20 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
 import { useRouter } from 'next/navigation';
-import { Loader2, CameraOff, ArrowRight } from 'lucide-react';
+import { Loader2, CameraOff, ArrowRight, Flashlight, FlashlightOff } from 'lucide-react';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+// MediaTrackCapabilities doesn't include `torch` in the TS lib yet
+interface ExtendedTrackCapabilities extends MediaTrackCapabilities {
+  torch?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function ScanPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -14,8 +27,21 @@ export default function ScanPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [manualBarcode, setManualBarcode] = useState('');
 
+  // Torch state
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const activeTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  // Debounce refs (no state — avoids re-render on every frame)
+  const lastCodeRef = useRef<string | null>(null);
+  const consecutiveCountRef = useRef(0);
+  const REQUIRED_CONSECUTIVE = 2;
+
   const router = useRouter();
 
+  // ---------------------------------------------------------------------------
+  // Lookup handler
+  // ---------------------------------------------------------------------------
   const handleLookup = useCallback(async (barcode: string) => {
     const cleanBarcode = barcode.trim();
     if (!cleanBarcode) return;
@@ -32,7 +58,7 @@ export default function ScanPage() {
       const data = await res.json();
 
       if (res.ok) {
-        // If already cataloged locally, go directly to its file
+        // Already in local DB → go straight to the product page
         if (data.source === 'local' && data.data?.id) {
           router.push(`/productos/${data.data.id}`);
           return;
@@ -57,62 +83,143 @@ export default function ScanPage() {
     }
   }, [router]);
 
+  // ---------------------------------------------------------------------------
+  // Torch toggle
+  // ---------------------------------------------------------------------------
+  const handleTorchToggle = useCallback(async () => {
+    const track = activeTrackRef.current;
+    if (!track) return;
+    try {
+      const next = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
+      setTorchOn(next);
+    } catch (err) {
+      console.warn('Torch toggle failed:', err);
+    }
+  }, [torchOn]);
+
+  // ---------------------------------------------------------------------------
+  // Camera effect
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     const codeReader = new BrowserMultiFormatReader();
+
+    // FIX #4 — `cancelled` flag covers the async gap between the await
+    // resolving and controlsRef being assigned. If the component unmounts
+    // before startCamera() finishes, we stop the controls as soon as we
+    // have a reference to them.
+    let cancelled = false;
     let isActive = true;
+
+    // Reset debounce state at mount
+    lastCodeRef.current = null;
+    consecutiveCountRef.current = 0;
 
     async function startCamera() {
       try {
         setCameraError(null);
 
-        const controls = await codeReader.decodeFromVideoDevice(
-          undefined,
-          videoRef.current || undefined,
+        // FIX #1 — explicit video constraints: 720p + rear camera
+        const videoConstraints: MediaTrackConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'environment',
+        };
+
+        const controls = await codeReader.decodeFromConstraints(
+          { video: videoConstraints },
+          videoRef.current!,
           async (result) => {
-            if (result && isActive) {
-              const code = result.getText();
-              isActive = false;
+            if (!result || !isActive) return;
 
-              if (controlsRef.current) {
-                controlsRef.current.stop();
-              }
+            const code = result.getText();
 
-              if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-                try {
-                  navigator.vibrate(50);
-                } catch {
-                  // ignore
-                }
-              }
-
-              setDetectedCode(code);
-              await handleLookup(code);
+            // FIX #3 — debounce: require REQUIRED_CONSECUTIVE identical reads
+            if (code === lastCodeRef.current) {
+              consecutiveCountRef.current += 1;
+            } else {
+              lastCodeRef.current = code;
+              consecutiveCountRef.current = 1;
             }
+
+            if (consecutiveCountRef.current < REQUIRED_CONSECUTIVE) return;
+
+            // Confirmed — lock scanning
+            isActive = false;
+
+            if (controlsRef.current) {
+              controlsRef.current.stop();
+            }
+
+            if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+              try { navigator.vibrate(50); } catch { /* ignore */ }
+            }
+
+            setDetectedCode(code);
+            await handleLookup(code);
           }
         );
 
+        // FIX #4 — if unmounted during the await, stop immediately
+        if (cancelled) {
+          controls.stop();
+          return;
+        }
+
         controlsRef.current = controls;
+
+        // FIX #2 — detect torch capability from the live video track
+        const stream = videoRef.current?.srcObject as MediaStream | null;
+        if (stream) {
+          const [videoTrack] = stream.getVideoTracks();
+          if (videoTrack) {
+            activeTrackRef.current = videoTrack;
+            const caps = videoTrack.getCapabilities() as ExtendedTrackCapabilities;
+            if (caps.torch === true) {
+              setTorchSupported(true);
+            }
+          }
+        }
       } catch (err: unknown) {
         console.error('Camera initialization error:', err);
-        const isNotAllowed = err instanceof Error && err.name === 'NotAllowedError';
-        setCameraError(
-          isNotAllowed
-            ? 'Acceso a la cámara denegado. Puedes ingresar el código manualmente abajo.'
-            : 'No se pudo iniciar la cámara en este dispositivo.'
-        );
+
+        // FIX #5 — differentiate error types
+        if (err instanceof Error) {
+          if (err.name === 'NotAllowedError') {
+            setCameraError(
+              'Acceso a la cámara denegado. Podés ingresar el código manualmente abajo.'
+            );
+          } else if (err.name === 'NotFoundError') {
+            setCameraError(
+              'Este dispositivo no tiene cámara disponible — usá el ingreso manual.'
+            );
+          } else {
+            setCameraError('No se pudo iniciar la cámara en este dispositivo.');
+          }
+        } else {
+          setCameraError('No se pudo iniciar la cámara en este dispositivo.');
+        }
       }
     }
 
     startCamera();
 
     return () => {
+      cancelled = true;
       isActive = false;
+      activeTrackRef.current = null;
+      setTorchOn(false);
+      setTorchSupported(false);
       if (controlsRef.current) {
         controlsRef.current.stop();
+        controlsRef.current = null;
       }
     };
   }, [handleLookup]);
 
+  // ---------------------------------------------------------------------------
+  // Manual submit
+  // ---------------------------------------------------------------------------
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualBarcode.trim()) {
@@ -120,6 +227,9 @@ export default function ScanPage() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="relative w-full h-[calc(100vh-4rem)] md:h-screen bg-[#211B26] overflow-hidden flex flex-col items-center justify-between text-white">
       {/* Background Video Stream */}
@@ -130,7 +240,7 @@ export default function ScanPage() {
         playsInline
       />
 
-      {/* Dark Vignette Overlay for focus */}
+      {/* Dark Vignette Overlay */}
       <div className="absolute inset-0 bg-black/40 pointer-events-none" />
 
       {/* Top Bar Status */}
@@ -149,6 +259,24 @@ export default function ScanPage() {
 
       {/* Viewfinder Target Area */}
       <div className="relative z-10 w-72 h-72 sm:w-80 sm:h-80 my-auto flex items-center justify-center">
+        {/* Torch Button — top-right corner of viewfinder, only if supported */}
+        {torchSupported && !cameraError && (
+          <button
+            onClick={handleTorchToggle}
+            aria-label={torchOn ? 'Apagar linterna' : 'Encender linterna'}
+            className={`absolute -top-10 right-0 z-20 flex items-center justify-center w-9 h-9 rounded-full border transition-colors duration-200 ${
+              torchOn
+                ? 'bg-[#2F6F62] border-[#2F6F62] text-white'
+                : 'bg-black/50 border-white/30 text-white/70 hover:border-white/60'
+            }`}
+          >
+            {torchOn
+              ? <Flashlight className="w-4 h-4" />
+              : <FlashlightOff className="w-4 h-4" />
+            }
+          </button>
+        )}
+
         {/* Reticle Corner Marks */}
         <div
           className={`absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 transition-colors duration-200 ${
@@ -202,7 +330,7 @@ export default function ScanPage() {
           </div>
         )}
 
-        {/* Camera Error Fallback Message in Viewfinder */}
+        {/* Camera Error Fallback */}
         {cameraError && (
           <div className="p-4 bg-black/80 rounded border border-[#C98A2C] text-center max-w-xs">
             <CameraOff className="w-6 h-6 text-[#C98A2C] mx-auto mb-2" />

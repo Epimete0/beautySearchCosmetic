@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, ScanLine, List } from 'lucide-react';
+import { Home, ScanLine, List, BarChart2 } from 'lucide-react';
 
 const NAV_ITEMS = [
   {
@@ -21,6 +21,16 @@ const NAV_ITEMS = [
     label: 'Catálogo',
     href: '/productos',
     icon: List,
+    isPrimary: false,
+  },
+];
+
+// Desktop-only extra items (not shown in mobile bottom nav)
+const DESKTOP_EXTRA_ITEMS = [
+  {
+    label: 'Estadísticas',
+    href: '/estadisticas',
+    icon: BarChart2,
     isPrimary: false,
   },
 ];
@@ -79,7 +89,28 @@ export default function Navigation() {
             );
           })}
         </nav>
+
+        {/* Desktop-only extras — below main nav, separated by a thin rule */}
+        <div className="px-2 pb-6 border-t border-[#E4E0E6] pt-4 flex flex-col gap-4">
+          {DESKTOP_EXTRA_ITEMS.map((item) => {
+            const active = isActive(item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex flex-col lg:flex-row items-center gap-1.5 lg:gap-3 px-3 py-2 transition-colors ${
+                  active ? 'text-[#2F6F62]' : 'text-[#8A8580] hover:text-[#211B26]'
+                }`}
+              >
+                <Icon className="w-5 h-5 transition-colors" strokeWidth={active ? 2.3 : 1.8} />
+                <span className="font-headline text-xs lg:text-sm">{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
       </aside>
+
 
       {/* Mobile Fixed Bottom Nav (max-width: 768px) */}
       <nav
